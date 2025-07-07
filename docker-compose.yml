@@ -1,0 +1,18 @@
+services:
+  face-mosaic:
+    build: .
+    container_name: face-mosaic-app
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      # X11 소켓 마운트 (GUI 표시용)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # 카메라 디바이스 마운트
+      - /dev/video0:/dev/video0:rw
+      # 현재 디렉토리 마운트 (개발용)
+      - .:/app
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    restart: unless-stopped 

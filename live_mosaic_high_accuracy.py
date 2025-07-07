@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
 최고 정확도 실시간 얼굴 인식 및 모자이크 프로그램
-CNN 모델 사용으로 최대 정확도 달성
+CNN 모델 사용으로 최대 정확도 달성 (Docker 환경 지원)
 """
 
 import cv2
 import face_recognition
 import time
+import os
+import sys
+
+# Docker 환경 감지
+IS_DOCKER = os.path.exists('/.dockerenv')
 
 # 최고 정확도 설정
 HIGH_ACCURACY_CONFIG = {
@@ -17,7 +22,8 @@ HIGH_ACCURACY_CONFIG = {
     "camera_height": 480,
     "mosaic_level": 15,            # 적당한 모자이크 (정확도 우선)
     "skip_frames": 1,              # 최소 스킵 (정확도 우선)
-    "upsample_times": 1            # 얼굴 탐지 정확도 향상
+    "upsample_times": 1,           # 얼굴 탐지 정확도 향상
+    "show_gui": not IS_DOCKER      # Docker에서는 GUI 비활성화
 }
 
 def apply_high_accuracy_mosaic(frame, x, y, w, h):
@@ -58,14 +64,25 @@ def detect_faces_high_accuracy(frame):
     except:
         return [], []
 
+def save_frame(frame, filename):
+    """프레임을 파일로 저장 (Docker 환경용)"""
+    try:
+        cv2.imwrite(filename, frame)
+        print(f"프레임 저장됨: {filename}")
+    except Exception as e:
+        print(f"프레임 저장 실패: {e}")
+
 def main():
     """최고 정확도 메인 프로그램"""
     print("=== 최고 정확도 실시간 얼굴 인식 및 모자이크 프로그램 ===")
+    print(f"환경: {'Docker' if IS_DOCKER else 'Local'}")
     print(f"설정: {HIGH_ACCURACY_CONFIG['process_every_n_frames']}프레임마다 처리")
     print(f"모델: {HIGH_ACCURACY_CONFIG['face_detection_model']} (최고 정확도)")
     print(f"허용 오차: {HIGH_ACCURACY_CONFIG['face_comparison_tolerance']} (엄격한 비교)")
     print(f"해상도: {HIGH_ACCURACY_CONFIG['camera_width']}x{HIGH_ACCURACY_CONFIG['camera_height']}")
+    print(f"GUI 표시: {HIGH_ACCURACY_CONFIG['show_gui']}")
     
+    # 카메라 초기화
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("카메라를 열 수 없습니다.")
@@ -86,10 +103,11 @@ def main():
         if not ret:
             break
         
-        cv2.putText(frame, "Press 's' to register", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.imshow('High Accuracy - Register', frame)
+        if HIGH_ACCURACY_CONFIG["show_gui"]:
+            cv2.putText(frame, "Press 's' to register", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.imshow('High Accuracy - Register', frame)
         
-        key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKey(1) & 0xFF if HIGH_ACCURACY_CONFIG["show_gui"] else 0
         if key == ord('s'):
             try:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -116,14 +134,16 @@ def main():
 
         elif key == ord('q'):
             cap.release()
-            cv2.destroyAllWindows()
+            if HIGH_ACCURACY_CONFIG["show_gui"]:
+                cv2.destroyAllWindows()
             return
 
     if host_face_encoding is None:
         print("얼굴 등록에 실패했습니다.")
         return
 
-    cv2.destroyWindow('High Accuracy - Register')
+    if HIGH_ACCURACY_CONFIG["show_gui"]:
+        cv2.destroyWindow('High Accuracy - Register')
     print("=== 최고 정확도 모드 시작 ===")
 
     # 성능 변수
@@ -132,6 +152,7 @@ def main():
     last_face_encodings = []
     frame_times = []
     accuracy_stats = {"correct_detections": 0, "total_detections": 0}
+    save_counter = 0
     
     while True:
         start_time = time.time()
@@ -195,13 +216,21 @@ def main():
         cv2.putText(frame, f"Accuracy: {accuracy:.1f}%", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         cv2.putText(frame, f"Model: {HIGH_ACCURACY_CONFIG['face_detection_model'].upper()}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-        cv2.imshow('High Accuracy - Live Interview', frame)
+        # Docker 환경에서는 주기적으로 프레임 저장
+        if IS_DOCKER and frame_count % 30 == 0:
+            save_frame(frame, f"output_frame_{save_counter:04d}.jpg")
+            save_counter += 1
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if HIGH_ACCURACY_CONFIG["show_gui"]:
+            cv2.imshow('High Accuracy - Live Interview', frame)
+
+        key = cv2.waitKey(1) & 0xFF if HIGH_ACCURACY_CONFIG["show_gui"] else 0
+        if key == ord('q'):
             break
 
     cap.release()
-    cv2.destroyAllWindows()
+    if HIGH_ACCURACY_CONFIG["show_gui"]:
+        cv2.destroyAllWindows()
     print(f"최종 정확도: {accuracy:.1f}%")
     print("프로그램을 종료합니다.")
 
