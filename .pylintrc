@@ -1,0 +1,44 @@
+[MASTER]
+# Python 코드를 분석할 때 사용할 Python 버전
+py-version=3.8
+
+[MESSAGES CONTROL]
+# 비활성화할 메시지들
+disable=
+    C0114, # missing-module-docstring
+    C0115, # missing-class-docstring
+    C0116, # missing-function-docstring
+    R0903, # too-few-public-methods
+    R0913, # too-many-arguments
+    R0914, # too-many-locals
+    R0915, # too-many-statements
+    W0621, # redefined-outer-name
+    W0703, # broad-except
+    W0612, # unused-variable
+    W0611, # unused-import
+    E1101, # no-member (cv2 모듈 문제 해결)
+
+[REPORTS]
+# 출력 형식 설정
+output-format=text
+score=yes
+
+[FORMAT]
+# 최대 줄 길이
+max-line-length=120
+
+[BASIC]
+# 좋은 변수명 패턴
+good-names=i,j,k,ex,Run,_,id
+
+[SIMILARITIES]
+# 중복 코드 검사 설정
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+
+[TYPECHECK]
+# 타입 체크 설정
+ignored-modules=cv2
+ignored-classes=SQLAlchemy,scipy 
