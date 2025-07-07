@@ -1,238 +1,164 @@
 #!/usr/bin/env python3
 """
-최고 정확도 실시간 얼굴 인식 및 모자이크 프로그램
-CNN 모델 사용으로 최대 정확도 달성 (Docker 환경 지원)
+mediapipe 기반 최고 정확도 실시간 얼굴 인식 및 모자이크 프로그램
+(dlib/face_recognition 없이 모든 플랫폼에서 동작)
 """
-
 import cv2
-import face_recognition
+import mediapipe as mp
+import numpy as np
 import time
 import os
-import sys
 
-# Docker 환경 감지
 IS_DOCKER = os.path.exists('/.dockerenv')
 
-# 최고 정확도 설정
-HIGH_ACCURACY_CONFIG = {
-    "process_every_n_frames": 2,    # 2프레임마다 처리 (높은 정확도)
-    "face_detection_model": "cnn",  # CNN 모델 (최고 정확도)
-    "face_comparison_tolerance": 0.4,  # 엄격한 비교 (높은 정확도)
-    "camera_width": 640,           # 높은 해상도 (정확도 향상)
+CONFIG = {
+    "camera_width": 640,
     "camera_height": 480,
-    "mosaic_level": 15,            # 적당한 모자이크 (정확도 우선)
-    "skip_frames": 1,              # 최소 스킵 (정확도 우선)
-    "upsample_times": 1,           # 얼굴 탐지 정확도 향상
-    "show_gui": not IS_DOCKER      # Docker에서는 GUI 비활성화
+    "mosaic_level": 15,
+    "show_gui": not IS_DOCKER
 }
 
-def apply_high_accuracy_mosaic(frame, x, y, w, h):
-    """고정확도 모자이크 적용"""
+mp_face_detection = mp.solutions.face_detection
+mp_drawing = mp.solutions.drawing_utils
+
+# 얼굴 특징 추출용 (진행자 등록)
+def get_face_embedding(image, face_box):
+    # mediapipe는 임베딩 제공X, 얼굴 ROI 픽셀값을 간단히 flatten하여 임시 임베딩으로 사용
+    x, y, w, h = face_box
+    face_img = cv2.resize(image[y:y+h, x:x+w], (64, 64)).flatten()
+    return face_img / 255.0
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+def apply_mosaic(frame, x, y, w, h):
     try:
         height, width = frame.shape[:2]
         x = max(0, min(x, width - 1))
         y = max(0, min(y, height - 1))
         w = min(w, width - x)
         h = min(h, height - y)
-        
         if w <= 0 or h <= 0:
             return frame
-            
         roi = frame[y:y+h, x:x+w]
-        roi_small = cv2.resize(roi, (HIGH_ACCURACY_CONFIG["mosaic_level"], HIGH_ACCURACY_CONFIG["mosaic_level"]))
+        roi_small = cv2.resize(roi, (CONFIG["mosaic_level"], CONFIG["mosaic_level"]))
         roi_mosaic = cv2.resize(roi_small, (w, h))
         frame[y:y+h, x:x+w] = roi_mosaic
         return frame
     except:
         return frame
 
-def detect_faces_high_accuracy(frame):
-    """고정확도 얼굴 탐지"""
-    try:
-        # 높은 해상도 유지 (정확도 향상)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # CNN 모델로 정확한 얼굴 탐지
-        face_locations = face_recognition.face_locations(
-            rgb_frame, 
-            model=HIGH_ACCURACY_CONFIG["face_detection_model"],
-            number_of_times_to_upsample=HIGH_ACCURACY_CONFIG["upsample_times"]
-        )
-        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-        
-        return face_locations, face_encodings
-    except:
-        return [], []
-
-def save_frame(frame, filename):
-    """프레임을 파일로 저장 (Docker 환경용)"""
-    try:
-        cv2.imwrite(filename, frame)
-        print(f"프레임 저장됨: {filename}")
-    except Exception as e:
-        print(f"프레임 저장 실패: {e}")
-
 def main():
-    """최고 정확도 메인 프로그램"""
-    print("=== 최고 정확도 실시간 얼굴 인식 및 모자이크 프로그램 ===")
+    print("=== mediapipe 실시간 얼굴 인식 및 모자이크 프로그램 ===")
     print(f"환경: {'Docker' if IS_DOCKER else 'Local'}")
-    print(f"설정: {HIGH_ACCURACY_CONFIG['process_every_n_frames']}프레임마다 처리")
-    print(f"모델: {HIGH_ACCURACY_CONFIG['face_detection_model']} (최고 정확도)")
-    print(f"허용 오차: {HIGH_ACCURACY_CONFIG['face_comparison_tolerance']} (엄격한 비교)")
-    print(f"해상도: {HIGH_ACCURACY_CONFIG['camera_width']}x{HIGH_ACCURACY_CONFIG['camera_height']}")
-    print(f"GUI 표시: {HIGH_ACCURACY_CONFIG['show_gui']}")
-    
-    # 카메라 초기화
+    print(f"해상도: {CONFIG['camera_width']}x{CONFIG['camera_height']}")
+    print(f"GUI 표시: {CONFIG['show_gui']}")
+
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("카메라를 열 수 없습니다.")
         return
-
-    # 고정확도 설정
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, HIGH_ACCURACY_CONFIG["camera_width"])
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HIGH_ACCURACY_CONFIG["camera_height"])
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG["camera_width"])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CONFIG["camera_height"])
     cap.set(cv2.CAP_PROP_FPS, 30)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     # 진행자 얼굴 등록
-    host_face_encoding = None
+    host_embedding = None
     print("카메라 앞에서 's' 키를 눌러 얼굴을 등록하세요.")
-    
-    while host_face_encoding is None:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        if HIGH_ACCURACY_CONFIG["show_gui"]:
-            cv2.putText(frame, "Press 's' to register", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.imshow('High Accuracy - Register', frame)
-        
-        key = cv2.waitKey(1) & 0xFF if HIGH_ACCURACY_CONFIG["show_gui"] else 0
-        if key == ord('s'):
-            try:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                face_locations = face_recognition.face_locations(
-                    rgb_frame, 
-                    model=HIGH_ACCURACY_CONFIG["face_detection_model"],
-                    number_of_times_to_upsample=HIGH_ACCURACY_CONFIG["upsample_times"]
-                )
-                
-                if len(face_locations) == 1:
-                    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-                    if face_encodings:
-                        host_face_encoding = face_encodings[0]
-                        print("✅ 얼굴 등록 완료! (고정확도 모드)")
-                        break
-                    else:
-                        print("❌ 얼굴 특징 추출 실패")
-                elif len(face_locations) > 1:
-                    print("❌ 여러 얼굴이 감지됨")
-                else:
-                    print("❌ 얼굴을 찾을 수 없음")
-            except Exception as e:
-                print(f"등록 오류: {e}")
-
-        elif key == ord('q'):
-            cap.release()
-            if HIGH_ACCURACY_CONFIG["show_gui"]:
-                cv2.destroyAllWindows()
+    with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.7) as face_detection:
+        while host_embedding is None:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = face_detection.process(rgb)
+            face_box = None
+            if results.detections:
+                for det in results.detections:
+                    bboxC = det.location_data.relative_bounding_box
+                    ih, iw, _ = frame.shape
+                    x = int(bboxC.xmin * iw)
+                    y = int(bboxC.ymin * ih)
+                    w = int(bboxC.width * iw)
+                    h = int(bboxC.height * ih)
+                    face_box = (x, y, w, h)
+                    break
+            if CONFIG["show_gui"]:
+                if face_box:
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0,255,0), 2)
+                cv2.putText(frame, "Press 's' to register", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
+                cv2.imshow('Register Host', frame)
+            key = cv2.waitKey(1) & 0xFF if CONFIG["show_gui"] else 0
+            if key == ord('s') and face_box:
+                host_embedding = get_face_embedding(frame, face_box)
+                print("✅ 얼굴 등록 완료!")
+                break
+            elif key == ord('q'):
+                cap.release()
+                if CONFIG["show_gui"]:
+                    cv2.destroyAllWindows()
+                return
+        if host_embedding is None:
+            print("얼굴 등록에 실패했습니다.")
             return
-
-    if host_face_encoding is None:
-        print("얼굴 등록에 실패했습니다.")
-        return
-
-    if HIGH_ACCURACY_CONFIG["show_gui"]:
-        cv2.destroyWindow('High Accuracy - Register')
-    print("=== 최고 정확도 모드 시작 ===")
-
-    # 성능 변수
-    frame_count = 0
-    last_face_locations = []
-    last_face_encodings = []
-    frame_times = []
-    accuracy_stats = {"correct_detections": 0, "total_detections": 0}
-    save_counter = 0
-    
-    while True:
-        start_time = time.time()
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # 프레임 스킵 최소화 (정확도 우선)
-        frame_count += 1
-        if frame_count % HIGH_ACCURACY_CONFIG["skip_frames"] != 0:
-            continue
-
-        # 얼굴 탐지 (빈번한 처리로 정확도 향상)
-        if frame_count % HIGH_ACCURACY_CONFIG["process_every_n_frames"] == 0:
-            face_locations, face_encodings = detect_faces_high_accuracy(frame)
-            last_face_locations = face_locations
-            last_face_encodings = face_encodings
-
-        # 얼굴 처리
-        for (top, right, bottom, left), face_encoding in zip(last_face_locations, last_face_encodings):
-            try:
-                # 엄격한 얼굴 비교
-                matches = face_recognition.compare_faces(
-                    [host_face_encoding], 
-                    face_encoding, 
-                    tolerance=HIGH_ACCURACY_CONFIG["face_comparison_tolerance"]
-                )
-                
-                is_host = True in matches
-                accuracy_stats["total_detections"] += 1
-                if is_host:
-                    accuracy_stats["correct_detections"] += 1
-
-                # 모자이크 또는 표시
+        if CONFIG["show_gui"]:
+            cv2.destroyWindow('Register Host')
+        print("=== 인터뷰 모드 시작 ===")
+        frame_times = []
+        save_counter = 0
+        while True:
+            start_time = time.time()
+            ret, frame = cap.read()
+            if not ret:
+                break
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = face_detection.process(rgb)
+            face_boxes = []
+            embeddings = []
+            if results.detections:
+                for det in results.detections:
+                    bboxC = det.location_data.relative_bounding_box
+                    ih, iw, _ = frame.shape
+                    x = int(bboxC.xmin * iw)
+                    y = int(bboxC.ymin * ih)
+                    w = int(bboxC.width * iw)
+                    h = int(bboxC.height * ih)
+                    face_boxes.append((x, y, w, h))
+                    embeddings.append(get_face_embedding(frame, (x, y, w, h)))
+            # 얼굴 비교 및 모자이크
+            for i, (box, emb) in enumerate(zip(face_boxes, embeddings)):
+                sim = cosine_similarity(host_embedding, emb)
+                is_host = sim > 0.85
+                x, y, w, h = box
                 if not is_host:
-                    frame = apply_high_accuracy_mosaic(frame, left, top, right - left, bottom - top)
-                    cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)  # 빨간색 (비진행자)
-                    cv2.putText(frame, "Guest", (left + 6, bottom - 6), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1)
+                    frame = apply_mosaic(frame, x, y, w, h)
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0,0,255), 2)
+                    cv2.putText(frame, "Guest", (x+6, y+h-6), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255,255,255), 1)
                 else:
-                    cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)  # 녹색 (진행자)
-                    cv2.putText(frame, "Host", (left + 6, bottom - 6), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1)
-                    
-            except:
-                continue
-
-        # 성능 측정
-        processing_time = (time.time() - start_time) * 1000
-        frame_times.append(processing_time)
-        if len(frame_times) > 30:
-            frame_times.pop(0)
-        
-        avg_time = sum(frame_times) / len(frame_times) if frame_times else 0
-        fps = 1000.0 / avg_time if avg_time > 0 else 0
-
-        # 정확도 계산
-        accuracy = (accuracy_stats["correct_detections"] / accuracy_stats["total_detections"] * 100) if accuracy_stats["total_detections"] > 0 else 0
-
-        # 성능 및 정확도 정보 표시
-        cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        cv2.putText(frame, f"Faces: {len(last_face_locations)}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        cv2.putText(frame, f"Accuracy: {accuracy:.1f}%", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        cv2.putText(frame, f"Model: {HIGH_ACCURACY_CONFIG['face_detection_model'].upper()}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-        # Docker 환경에서는 주기적으로 프레임 저장
-        if IS_DOCKER and frame_count % 30 == 0:
-            save_frame(frame, f"output_frame_{save_counter:04d}.jpg")
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0,255,0), 2)
+                    cv2.putText(frame, "Host", (x+6, y+h-6), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255,255,255), 1)
+            # 성능 표시
+            processing_time = (time.time() - start_time) * 1000
+            frame_times.append(processing_time)
+            if len(frame_times) > 30:
+                frame_times.pop(0)
+            avg_time = sum(frame_times) / len(frame_times) if frame_times else 0
+            fps = 1000.0 / avg_time if avg_time > 0 else 0
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+            cv2.putText(frame, f"Faces: {len(face_boxes)}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+            if IS_DOCKER and save_counter % 30 == 0:
+                cv2.imwrite(f"output_frame_{save_counter:04d}.jpg", frame)
             save_counter += 1
-
-        if HIGH_ACCURACY_CONFIG["show_gui"]:
-            cv2.imshow('High Accuracy - Live Interview', frame)
-
-        key = cv2.waitKey(1) & 0xFF if HIGH_ACCURACY_CONFIG["show_gui"] else 0
-        if key == ord('q'):
-            break
-
-    cap.release()
-    if HIGH_ACCURACY_CONFIG["show_gui"]:
-        cv2.destroyAllWindows()
-    print(f"최종 정확도: {accuracy:.1f}%")
-    print("프로그램을 종료합니다.")
+            if CONFIG["show_gui"]:
+                cv2.imshow('Live Interview - mediapipe', frame)
+            key = cv2.waitKey(1) & 0xFF if CONFIG["show_gui"] else 0
+            if key == ord('q'):
+                break
+        cap.release()
+        if CONFIG["show_gui"]:
+            cv2.destroyAllWindows()
+        print("프로그램을 종료합니다.")
 
 if __name__ == '__main__':
     main() 

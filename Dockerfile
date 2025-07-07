@@ -22,9 +22,6 @@ RUN apt-get update && apt-get install -y \
     libatlas-base-dev \
     gfortran \
     wget \
-    build-essential \
-    cmake \
-    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # 작업 디렉토리 설정
@@ -32,19 +29,12 @@ WORKDIR /app
 
 # Python 의존성 파일 복사 및 설치
 COPY requirements.txt .
-
-# ARM64 호환성을 위해 미리 빌드된 wheel 사용
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir cmake && \
-    pip install --no-cache-dir --only-binary=all dlib
-
-# 나머지 패키지 설치
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 애플리케이션 파일 복사
 COPY . .
 
-# Haar Cascade 파일 다운로드
+# Haar Cascade 파일 다운로드 (mediapipe는 필요없지만 예시로 유지)
 RUN wget -O haarcascade_frontalface_default.xml \
     https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml
 
